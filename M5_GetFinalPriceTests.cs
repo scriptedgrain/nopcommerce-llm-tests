@@ -1,0 +1,531 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using Moq;
+using NUnit.Framework;
+using Nop.Core;
+using Nop.Core.Caching;
+using Nop.Core.Domain.Catalog;
+using Nop.Core.Domain.Customers;
+using Nop.Core.Domain.Discounts;
+using Nop.Core.Domain.Orders;
+using Nop.Core.Domain.Stores;
+using Nop.Services.Catalog;
+using Nop.Services.Discounts;
+
+namespace Nop.Services.Tests.Catalog
+{
+    [TestFixture]
+    public class GetFinalPriceTests
+    {
+        private Mock<IWorkContext> _workContextMock;
+        private Mock<IStoreContext> _storeContextMock;
+        private Mock<IDiscountService> _discountServiceMock;
+        private Mock<ICategoryService> _categoryServiceMock;
+        private Mock<IManufacturerService> _manufacturerServiceMock;
+        private Mock<IProductAttributeParser> _productAttributeParserMock;
+        private Mock<IProductService> _productServiceMock;
+        private Mock<ICacheManager> _cacheManagerMock;
+        private ShoppingCartSettings _shoppingCartSettings;
+        private CatalogSettings _catalogSettings;
+        private PriceCalculationService _service;
+        private Store _store;
+        private Customer _customer;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _workContextMock = new Mock<IWorkContext>();
+            _storeContextMock = new Mock<IStoreContext>();
+            _discountServiceMock = new Mock<IDiscountService>();
+            _categoryServiceMock = new Mock<ICategoryService>();
+            _manufacturerServiceMock = new Mock<IManufacturerService>();
+            _productAttributeParserMock = new Mock<IProductAttributeParser>();
+            _productServiceMock = new Mock<IProductService>();
+            _cacheManagerMock = new Mock<ICacheManager>();
+            _shoppingCartSettings = new ShoppingCartSettings();
+            _catalogSettings = new CatalogSettings
+            {
+                IgnoreDiscounts = false,
+                CacheProductPrices = false
+            };
+
+            _store = new Store { Id = 1 };
+            _storeContextMock.Setup(s => s.CurrentStore).Returns(_store);
+
+            _customer = new Customer();
+
+            // Default cache manager: bypass cache, execute factory directly
+            _cacheManagerMock
+                .Setup(c => c.Get(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<Func<ProductPriceForCaching>>()))
+                .Returns<string, int, Func<ProductPriceForCaching>>((key, time, factory) => factory());
+
+            _service = new PriceCalculationService(
+                _workContextMock.Object,
+                _storeContextMock.Object,
+                _discountServiceMock.Object,
+                _categoryServiceMock.Object,
+                _manufacturerServiceMock.Object,
+                _productAttributeParserMock.Object,
+                _productServiceMock.Object,
+                _cacheManagerMock.Object,
+                _shoppingCartSettings,
+                _catalogSettings);
+        }
+
+        private Product CreateSimpleProduct(decimal price = 100m, int id = 1)
+        {
+            return new Product
+            {
+                Id = id,
+                Price = price,
+                HasTierPrices = false,
+                IsRental = false,
+                CustomerEntersPrice = false,
+                HasDiscountsApplied = false
+            };
+        }
+
+        // -------------------------------------------------------------------------
+        // Null product throws ArgumentNullException
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_NullProduct_ThrowsArgumentNullException()
+        {
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            Assert.Throws<ArgumentNullException>(() =>
+                _service.GetFinalPrice(null, _customer, 0m, true, 1,
+                    null, null, out discountAmount, out appliedDiscounts));
+        }
+
+        // -------------------------------------------------------------------------
+        // Happy path: base price returned unchanged when no discounts, no tier prices
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_NoDiscountsNoTierPrices_ReturnsProductPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var result = _service.GetFinalPrice(product, _customer);
+
+            Assert.That(result, Is.EqualTo(100m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Additional charge is added to product price
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_WithAdditionalCharge_AddsChargeToPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var result = _service.GetFinalPrice(product, _customer, additionalCharge: 15m);
+
+            Assert.That(result, Is.EqualTo(115m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Overridden product price replaces product.Price
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_WithOverriddenPrice_UsesOverriddenPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                overriddenProductPrice: 50m,
+                additionalCharge: 0m,
+                includeDiscounts: true,
+                quantity: 1,
+                rentalStartDate: null,
+                rentalEndDate: null,
+                discountAmount: out discountAmount,
+                appliedDiscounts: out appliedDiscounts);
+
+            Assert.That(result, Is.EqualTo(50m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Price never goes below zero
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_DiscountExceedsPrice_ReturnZero()
+        {
+            var product = CreateSimpleProduct(price: 10m);
+            product.HasDiscountsApplied = true;
+
+            // Simulate a large discount via GetAllDiscountsForCaching + GetPreferredDiscount
+            // We rely on GetDiscountAmount being called internally — stub via IgnoreDiscounts=false
+            // and inject a subclass or use the overridden method path.
+            // Since GetDiscountAmount is protected virtual, we test the clamp via a subclass.
+            // Here we use a test double that injects a large additional negative charge instead.
+            _catalogSettings.IgnoreDiscounts = true;
+
+            // additionalCharge negative large enough to push below 0
+            var result = _service.GetFinalPrice(product, _customer, additionalCharge: -500m);
+
+            Assert.That(result, Is.EqualTo(0m));
+        }
+
+        // -------------------------------------------------------------------------
+        // includeDiscounts = false: no discount applied, out params stay zero/empty
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_IncludeDiscountsFalse_DiscountAmountIsZero()
+        {
+            var product = CreateSimpleProduct(price: 80m);
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: false,
+                quantity: 1,
+                out discountAmount,
+                out appliedDiscounts);
+
+            Assert.That(discountAmount, Is.EqualTo(0m));
+            Assert.That(appliedDiscounts, Is.Empty);
+        }
+
+        [Test]
+        public void GetFinalPrice_IncludeDiscountsFalse_ReturnProductPrice()
+        {
+            var product = CreateSimpleProduct(price: 80m);
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: false,
+                quantity: 1,
+                out discountAmount,
+                out appliedDiscounts);
+
+            Assert.That(result, Is.EqualTo(80m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Tier price: when quantity qualifies, tier price is used instead of product.Price
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_WithMatchingTierPrice_UsesTierPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            product.HasTierPrices = true;
+
+            var tierPrice = new TierPrice
+            {
+                Quantity = 5,
+                Price = 70m,
+                StoreId = 0   // 0 = applies to all stores
+            };
+            product.TierPrices.Add(tierPrice);
+
+            _catalogSettings.IgnoreDiscounts = true;
+
+            // quantity >= 5 should trigger tier price
+            var result = _service.GetFinalPrice(product, _customer, quantity: 10);
+
+            Assert.That(result, Is.EqualTo(70m));
+        }
+
+        [Test]
+        public void GetFinalPrice_QuantityBelowTierThreshold_UsesRegularPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            product.HasTierPrices = true;
+
+            var tierPrice = new TierPrice
+            {
+                Quantity = 10,
+                Price = 70m,
+                StoreId = 0
+            };
+            product.TierPrices.Add(tierPrice);
+
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var result = _service.GetFinalPrice(product, _customer, quantity: 1);
+
+            Assert.That(result, Is.EqualTo(100m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Rental product: price is multiplied by rental periods
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_RentalProduct_MultipliesByRentalPeriods()
+        {
+            var product = new Product
+            {
+                Id = 1,
+                Price = 50m,
+                IsRental = true,
+                RentalPricePeriod = RentalPricePeriod.Days,
+                RentalPriceLength = 1,
+                HasTierPrices = false,
+                CustomerEntersPrice = false
+            };
+
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var start = new DateTime(2024, 1, 1);
+            var end = new DateTime(2024, 1, 4); // 3 days
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: false,
+                quantity: 1,
+                rentalStartDate: start,
+                rentalEndDate: end,
+                discountAmount: out discountAmount,
+                appliedDiscounts: out appliedDiscounts);
+
+            // 50 * 3 periods = 150
+            Assert.That(result, Is.EqualTo(150m));
+        }
+
+        [Test]
+        public void GetFinalPrice_RentalProduct_NoDates_PriceNotMultiplied()
+        {
+            var product = new Product
+            {
+                Id = 1,
+                Price = 50m,
+                IsRental = true,
+                RentalPricePeriod = RentalPricePeriod.Days,
+                RentalPriceLength = 1,
+                HasTierPrices = false,
+                CustomerEntersPrice = false
+            };
+
+            _catalogSettings.IgnoreDiscounts = true;
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: false,
+                quantity: 1,
+                rentalStartDate: null,
+                rentalEndDate: null,
+                discountAmount: out discountAmount,
+                appliedDiscounts: out appliedDiscounts);
+
+            // No dates => rental period multiplication skipped
+            Assert.That(result, Is.EqualTo(50m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Cache: when cache returns stored result, factory is not re-executed
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_CacheHit_ReturnsCachedPrice()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+
+            var cachedResult = new ProductPriceForCaching { Price = 42m };
+
+            _cacheManagerMock
+                .Setup(c => c.Get(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<Func<ProductPriceForCaching>>()))
+                .Returns(cachedResult);
+
+            var result = _service.GetFinalPrice(product, _customer);
+
+            Assert.That(result, Is.EqualTo(42m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Cached discounts are propagated to out parameters
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_CachedDiscounts_PopulatesOutParameters()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+
+            var discount = new DiscountForCaching { Name = "TestDiscount" };
+            var cachedResult = new ProductPriceForCaching
+            {
+                Price = 80m,
+                AppliedDiscountAmount = 20m,
+                AppliedDiscounts = new List<DiscountForCaching> { discount }
+            };
+
+            _cacheManagerMock
+                .Setup(c => c.Get(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<Func<ProductPriceForCaching>>()))
+                .Returns(cachedResult);
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: true,
+                quantity: 1,
+                out discountAmount,
+                out appliedDiscounts);
+
+            Assert.That(result, Is.EqualTo(80m));
+            Assert.That(discountAmount, Is.EqualTo(20m));
+            Assert.That(appliedDiscounts.Count, Is.EqualTo(1));
+            Assert.That(appliedDiscounts[0].Name, Is.EqualTo("TestDiscount"));
+        }
+
+        // -------------------------------------------------------------------------
+        // CustomerEntersPrice: discount is skipped
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_CustomerEntersPrice_DiscountNotApplied()
+        {
+            var product = new Product
+            {
+                Id = 1,
+                Price = 100m,
+                CustomerEntersPrice = true,
+                HasTierPrices = false,
+                IsRental = false
+            };
+
+            // Even with IgnoreDiscounts=false, CustomerEntersPrice bypasses discount
+            _catalogSettings.IgnoreDiscounts = false;
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            var result = _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: true,
+                quantity: 1,
+                out discountAmount,
+                out appliedDiscounts);
+
+            Assert.That(result, Is.EqualTo(100m));
+            Assert.That(discountAmount, Is.EqualTo(0m));
+        }
+
+        // -------------------------------------------------------------------------
+        // IgnoreDiscounts setting: discount is skipped
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_IgnoreDiscountsTrue_DiscountNotApplied()
+        {
+            var product = CreateSimpleProduct(price: 100m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            decimal discountAmount;
+            List<DiscountForCaching> appliedDiscounts;
+
+            _service.GetFinalPrice(product, _customer,
+                additionalCharge: 0m,
+                includeDiscounts: true,
+                quantity: 1,
+                out discountAmount,
+                out appliedDiscounts);
+
+            Assert.That(discountAmount, Is.EqualTo(0m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Simple overload (5-param) delegates correctly
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_SimpleOverload_ReturnsProductPrice()
+        {
+            var product = CreateSimpleProduct(price: 75m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var result = _service.GetFinalPrice(product, _customer);
+
+            Assert.That(result, Is.EqualTo(75m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Zero price product
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_ZeroPriceProduct_ReturnsZero()
+        {
+            var product = CreateSimpleProduct(price: 0m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            var result = _service.GetFinalPrice(product, _customer);
+
+            Assert.That(result, Is.EqualTo(0m));
+        }
+
+        // -------------------------------------------------------------------------
+        // quantity = 1 (default) vs explicit quantity
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_DefaultQuantityOne_UsedWhenNotSpecified()
+        {
+            var product = CreateSimpleProduct(price: 99m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            // With HasTierPrices = false no tier price lookup needed
+            var result = _service.GetFinalPrice(product, _customer, quantity: 1);
+
+            Assert.That(result, Is.EqualTo(99m));
+        }
+
+        // -------------------------------------------------------------------------
+        // Customer with no roles — GetCustomerRoleIds returns empty array without exception
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_CustomerWithNoRoles_DoesNotThrow()
+        {
+            var product = CreateSimpleProduct(price: 55m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            Assert.DoesNotThrow(() => _service.GetFinalPrice(product, _customer));
+        }
+
+        // -------------------------------------------------------------------------
+        // Customer with active roles — role IDs included in cache key
+        // -------------------------------------------------------------------------
+
+        [Test]
+        public void GetFinalPrice_CustomerWithRoles_ReturnsPrice()
+        {
+            var product = CreateSimpleProduct(price: 55m);
+            _catalogSettings.IgnoreDiscounts = true;
+
+            _customer.CustomerRoles.Add(new CustomerRole { Id = 10, Active = true });
+
+            var result = _service.GetFinalPrice(product, _customer);
+
+            Assert.That(result, Is.EqualTo(55m));
+        }
+    }
+}

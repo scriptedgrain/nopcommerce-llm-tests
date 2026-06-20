@@ -1,0 +1,264 @@
+Você é um desenvolvedor C# encarregado de escrever testes unitários
+
+para um sistema legado de e-commerce (nopCommerce 3.90, .NET Framework
+
+4.5.1).
+
+Sua tarefa: gerar testes unitários para o método RoundPrice da
+
+classe RoundingHelper, apresentado abaixo.
+
+Requisitos obrigatórios:
+
+- Framework de testes: NUnit 3.x (atributos [TestFixture], [Test],
+
+  [SetUp]).
+
+- Biblioteca de mocking: Moq (não use Rhino.Mocks).
+
+- O código deve compilar em .NET Framework 4.8 / C# 7.3.
+
+- Gere uma classe de teste completa e autocontida, incluindo todos os
+
+  usings necessários.
+
+- Cubra os principais cenários do método: caminho feliz, casos de
+
+  borda e condições de erro que você identificar na lógica.
+
+- Use asserções do NUnit (Assert.That / Assert.AreEqual).
+
+- Não invente membros que não existam no código fornecido. Use apenas
+
+  os tipos e assinaturas apresentados abaixo.
+
+- Responda APENAS com o código C# da classe de teste, sem explicações.
+
+=== CÓDIGO DO MÉTODO SOB TESTE ===
+
+using System;
+using Nop.Core;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Infrastructure;
+
+namespace Nop.Services.Catalog
+{
+    /// <summary>
+    /// Extensions
+    /// </summary>
+    public static class RoundingHelper
+    {
+        /// <summary>
+        /// Round a product or order total
+        /// </summary>
+        /// <param name="value">Value to round</param>
+        /// <returns>Rounded value</returns>
+        public static decimal RoundPrice(decimal value)
+        {
+            //we use this method because some currencies (e.g. Gungarian Forint or Swiss Franc) use non-standard rules for rounding
+            //you can implement any rounding logic here
+
+            var workContext = EngineContext.Current.Resolve<IWorkContext>();
+
+            return value.Round(workContext.WorkingCurrency.RoundingType);
+        }
+
+        /// <summary>
+        /// Round a product or order total for the currency
+        /// </summary>
+        /// <param name="value">Value to round</param>
+        /// <param name="currency">Currency</param>
+        /// <returns>Rounded value</returns>
+        public static decimal RoundPrice(decimal value, Currency currency)
+        {
+            return value.Round(currency.RoundingType);
+        }
+
+        /// <summary>
+        /// Round
+        /// </summary>
+        /// <param name="value">Value to round</param>
+        /// <param name="roundingType">The rounding type</param>
+        /// <returns>Rounded value</returns>
+        public static decimal Round(this decimal value, RoundingType roundingType)
+        {
+            //default round (Rounding001)
+            var rez = Math.Round(value, 2);
+            decimal t;
+
+            //Cash rounding (details: https://en.wikipedia.org/wiki/Cash_rounding)
+            switch (roundingType)
+            {
+                //rounding with 0.05 or 5 intervals
+                case RoundingType.Rounding005Up:
+                case RoundingType.Rounding005Down:
+                    t = (rez - Math.Truncate(rez)) * 10;
+                    t = (t - Math.Truncate(t)) * 10;
+
+                    if (roundingType == RoundingType.Rounding005Down)
+                        t = t >= 5 ? 5 - t : t * -1;
+                    else
+                        t = t >= 5 ? 10 - t : 5 - t;
+
+                    rez += t / 100;
+                    break;
+                //rounding with 0.10 intervals
+                case RoundingType.Rounding01Up:
+                case RoundingType.Rounding01Down:
+                    t = (rez - Math.Truncate(rez)) * 10;
+                    t = (t - Math.Truncate(t)) * 10;
+
+                    if (roundingType == RoundingType.Rounding01Down && t == 5)
+                        t = -5;
+                    else
+                        t = t < 5 ? t * -1 : 10 - t;
+
+                    rez += t / 100;
+                    break;
+                //rounding with 0.50 intervals
+                case RoundingType.Rounding05:
+                    t = (rez - Math.Truncate(rez)) * 100;
+                    t = t < 25 ? t * -1 : t < 50 || t < 75 ? 50 - t : 100 - t;
+
+                    rez += t / 100;
+                    break;
+                //rounding with 1.00 intervals
+                case RoundingType.Rounding1:
+                case RoundingType.Rounding1Up:
+                    t = (rez - Math.Truncate(rez)) * 100;
+
+                    if (roundingType == RoundingType.Rounding1Up && t > 0)
+                        rez = Math.Truncate(rez) + 1;
+                    else
+                        rez = t < 50 ? Math.Truncate(rez) : Math.Truncate(rez) + 1;
+
+                    break;
+                case RoundingType.Rounding001:
+                default:
+                    break;
+            }
+
+            return rez;
+        }
+    }
+}
+
+
+=== TIPOS E INTERFACES DOS QUAIS O MÉTODO DEPENDE ===
+
+namespace Nop.Core.Domain.Directory
+{
+    public enum RoundingType
+    {
+        /// <summary>
+        /// Default rounding (Match.Round(num, 2))
+        /// </summary>
+        Rounding001 = 0,
+        /// <summary>
+        /// Prices are rounded up to the nearest multiple of 5 cents for sales ending in: 3¢ & 4¢ round to 5¢; and, 8¢ & 9¢ round to 10¢
+        /// </summary>
+        Rounding005Up = 10,
+        /// <summary>
+        /// Prices are rounded down to the nearest multiple of 5 cents for sales ending in: 1¢ & 2¢ to 0¢; and, 6¢ & 7¢ to 5¢
+        /// </summary>
+        Rounding005Down = 20,
+        /// <summary>
+        /// Round up to the nearest 10 cent value for sales ending in 5¢
+        /// </summary>
+        Rounding01Up = 30,
+        /// <summary>
+        /// Round down to the nearest 10 cent value for sales ending in 5¢
+        /// </summary>
+        Rounding01Down = 40,
+        /// <summary>
+        /// Sales ending in 1–24 cents round down to 0¢
+        /// Sales ending in 25–49 cents round up to 50¢
+        /// Sales ending in 51–74 cents round down to 50¢
+        /// Sales ending in 75–99 cents round up to the next whole dollar
+        /// </summary>
+        Rounding05 = 50,
+        /// <summary>
+        /// Sales ending in 1–49 cents round down to 0
+        /// Sales ending in 50–99 cents round up to the next whole dollar
+        /// For example, Swedish Krona
+        /// </summary>
+        Rounding1 = 60,
+        /// <summary>
+        /// Sales ending in 1–99 cents round up to the next whole dollar
+        /// </summary>
+        Rounding1Up = 70
+    }
+}
+
+using System;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Stores;
+
+namespace Nop.Core.Domain.Directory
+{
+    /// <summary>
+    /// Represents a currency
+    /// </summary>
+    public partial class Currency : BaseEntity, ILocalizedEntity, IStoreMappingSupported
+    {
+
+/// <summary>
+/// Gets or sets the rounding type
+/// </summary>
+public RoundingType RoundingType
+{
+    get
+    {
+        return (RoundingType)RoundingTypeId;
+    }
+    set
+    {
+        RoundingTypeId = (int)value;
+    }
+}
+
+using Nop.Core.Domain.Customers;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Tax;
+using Nop.Core.Domain.Vendors;
+
+namespace Nop.Core
+{
+    /// <summary>
+    /// Work context
+    /// </summary>
+    public interface IWorkContext
+    {
+        /// <summary>
+        /// Gets or sets the current customer
+        /// </summary>
+        Customer CurrentCustomer { get; set; }
+        /// <summary>
+        /// Gets or sets the original customer (in case the current one is impersonated)
+        /// </summary>
+        Customer OriginalCustomerIfImpersonated { get; }
+        /// <summary>
+        /// Gets or sets the current vendor (logged-in manager)
+        /// </summary>
+        Vendor CurrentVendor { get; }
+
+        /// <summary>
+        /// Get or set current user working language
+        /// </summary>
+        Language WorkingLanguage { get; set; }
+        /// <summary>
+        /// Get or set current user working currency
+        /// </summary>
+        Currency WorkingCurrency { get; set; }
+        /// <summary>
+        /// Get or set current tax display type
+        /// </summary>
+        TaxDisplayType TaxDisplayType { get; set; }
+
+        /// <summary>
+        /// Get or set value indicating whether we're in admin area
+        /// </summary>
+        bool IsAdmin { get; set; }
+    }
+}

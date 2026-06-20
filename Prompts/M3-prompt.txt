@@ -1,0 +1,272 @@
+Você é um desenvolvedor C# encarregado de escrever testes unitários
+para um sistema legado de e-commerce (nopCommerce 3.90, .NET Framework
+4.5.1).
+Sua tarefa: gerar testes unitários para o método FormatPrice da
+classe PriceFormatter, apresentado abaixo.
+Requisitos obrigatórios:
+- Framework de testes: NUnit 3.x (atributos [TestFixture], [Test],
+  [SetUp]).
+- Biblioteca de mocking: Moq (não use Rhino.Mocks).
+- O código deve compilar em .NET Framework 4.8 / C# 7.3.
+- Gere uma classe de teste completa e autocontida, incluindo todos os
+  usings necessários.
+- Cubra os principais cenários do método: caminho feliz, casos de
+  borda e condições de erro que você identificar na lógica.
+- Use asserções do NUnit (Assert.That / Assert.AreEqual).
+- Não invente membros que não existam no código fornecido. Use apenas
+  os tipos e assinaturas apresentados abaixo.
+- Responda APENAS com o código C# da classe de teste, sem explicações.
+=== CÓDIGO DO MÉTODO SOB TESTE ===
+
+using System;
+using System.Globalization;
+using Nop.Core;
+using Nop.Core.Domain.Catalog;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Tax;
+using Nop.Services.Directory;
+using Nop.Services.Localization;
+
+namespace Nop.Services.Catalog
+{
+    /// <summary>
+    /// Price formatter
+    /// </summary>
+    public partial class PriceFormatter : IPriceFormatter
+    {
+        #region Fields
+
+        private readonly IWorkContext _workContext;
+        private readonly ICurrencyService _currencyService;
+        private readonly ILocalizationService _localizationService;
+        private readonly TaxSettings _taxSettings;
+        private readonly CurrencySettings _currencySettings;
+
+        #endregion
+
+        #region Constructors
+
+        public PriceFormatter(IWorkContext workContext,
+            ICurrencyService currencyService,
+            ILocalizationService localizationService,
+            TaxSettings taxSettings,
+            CurrencySettings currencySettings)
+        {
+            this._workContext = workContext;
+            this._currencyService = currencyService;
+            this._localizationService = localizationService;
+            this._taxSettings = taxSettings;
+            this._currencySettings = currencySettings;
+        }
+=== TIPOS E INTERFACES DOS QUAIS O MÉTODO DEPENDE ===
+
+using Nop.Core.Domain.Customers;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Tax;
+using Nop.Core.Domain.Vendors;
+
+namespace Nop.Core
+{
+    /// <summary>
+    /// Work context
+    /// </summary>
+    public interface IWorkContext
+    {
+        /// <summary>
+        /// Gets or sets the current customer
+        /// </summary>
+        Customer CurrentCustomer { get; set; }
+        /// <summary>
+        /// Gets or sets the original customer (in case the current one is impersonated)
+        /// </summary>
+        Customer OriginalCustomerIfImpersonated { get; }
+        /// <summary>
+        /// Gets or sets the current vendor (logged-in manager)
+        /// </summary>
+        Vendor CurrentVendor { get; }
+
+        /// <summary>
+        /// Get or set current user working language
+        /// </summary>
+        Language WorkingLanguage { get; set; }
+        /// <summary>
+        /// Get or set current user working currency
+        /// </summary>
+        Currency WorkingCurrency { get; set; }
+        /// <summary>
+        /// Get or set current tax display type
+        /// </summary>
+        TaxDisplayType TaxDisplayType { get; set; }
+
+        /// <summary>
+        /// Get or set value indicating whether we're in admin area
+        /// </summary>
+        bool IsAdmin { get; set; }
+    }
+}
+
+using Nop.Core.Configuration;
+
+namespace Nop.Core.Domain.Directory
+{
+    public class CurrencySettings : ISettings
+    {
+        public bool DisplayCurrencyLabel { get; set; }
+        public int PrimaryStoreCurrencyId { get; set; }
+        public int PrimaryExchangeRateCurrencyId { get; set; }
+        public string ActiveExchangeRateProviderSystemName { get; set; }
+        public bool AutoUpdateEnabled { get; set; }
+    }
+}
+using System;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Stores;
+
+namespace Nop.Core.Domain.Directory
+{
+    /// <summary>
+    /// Represents a currency
+    /// </summary>
+    public partial class Currency : BaseEntity, ILocalizedEntity, IStoreMappingSupported
+    {
+        /// <summary>
+        /// Gets or sets the name
+        /// </summary>
+        public string Name { get; set; }
+
+        /// <summary>
+        /// Gets or sets the currency code
+        /// </summary>
+        public string CurrencyCode { get; set; }
+
+        /// <summary>
+        /// Gets or sets the rate
+        /// </summary>
+        public decimal Rate { get; set; }
+
+        /// <summary>
+        /// Gets or sets the display locale
+        /// </summary>
+        public string DisplayLocale { get; set; }
+
+        /// <summary>
+        /// Gets or sets the custom formatting
+        /// </summary>
+        public string CustomFormatting { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the entity is limited/restricted to certain stores
+        /// </summary>
+        public bool LimitedToStores { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the entity is published
+        /// </summary>
+        public bool Published { get; set; }
+
+        /// <summary>
+        /// Gets or sets the display order
+        /// </summary>
+        public int DisplayOrder { get; set; }
+
+        /// <summary>
+        /// Gets or sets the date and time of instance creation
+        /// </summary>
+        public DateTime CreatedOnUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the date and time of instance update
+        /// </summary>
+        public DateTime UpdatedOnUtc { get; set; }
+
+        /// <summary>
+        /// Gets or sets the rounding type identifier
+        /// </summary>
+        public int RoundingTypeId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the rounding type
+        /// </summary>
+        public RoundingType RoundingType
+        {
+            get
+            {
+                return (RoundingType)RoundingTypeId;
+            }
+            set
+            {
+                RoundingTypeId = (int)value;
+            }
+        }
+    }
+
+}
+using System.Collections.Generic;
+using Nop.Core.Domain.Stores;
+
+namespace Nop.Core.Domain.Localization
+{
+    /// <summary>
+    /// Represents a language
+    /// </summary>
+    public partial class Language : BaseEntity, IStoreMappingSupported
+    {
+        private ICollection<LocaleStringResource> _localeStringResources;
+
+        /// <summary>
+        /// Gets or sets the name
+        /// </summary>
+        public string Name { get; set; }
+
+        /// <summary>
+        /// Gets or sets the language culture
+        /// </summary>
+        public string LanguageCulture { get; set; }
+
+        /// <summary>
+        /// Gets or sets the unique SEO code
+        /// </summary>
+        public string UniqueSeoCode { get; set; }
+        
+        /// <summary>
+        /// Gets or sets the flag image file name
+        /// </summary>
+        public string FlagImageFileName { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the language supports "Right-to-left"
+        /// </summary>
+        public bool Rtl { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the entity is limited/restricted to certain stores
+        /// </summary>
+        public bool LimitedToStores { get; set; }
+
+        /// <summary>
+        /// Gets or sets the identifier of the default currency for this language; 0 is set when we use the default currency display order
+        /// </summary>
+        public int DefaultCurrencyId { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the language is published
+        /// </summary>
+        public bool Published { get; set; }
+
+        /// <summary>
+        /// Gets or sets the display order
+        /// </summary>
+        public int DisplayOrder { get; set; }
+        
+        /// <summary>
+        /// Gets or sets locale string resources
+        /// </summary>
+        public virtual ICollection<LocaleStringResource> LocaleStringResources
+        {
+            get { return _localeStringResources ?? (_localeStringResources = new List<LocaleStringResource>()); }
+            protected set { _localeStringResources = value; }
+        }
+    }
+}

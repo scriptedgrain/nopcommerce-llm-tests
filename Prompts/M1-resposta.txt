@@ -1,0 +1,461 @@
+using System;
+using Moq;
+using Nop.Core;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Infrastructure;
+using Nop.Services.Catalog;
+using NUnit.Framework;
+
+namespace Nop.Services.Tests.Catalog
+{
+    [TestFixture]
+    public class RoundingHelperTests
+    {
+        private Mock<IWorkContext> _workContextMock;
+        private Mock<IEngine> _engineMock;
+        private Currency _currency;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _currency = new Currency();
+            _workContextMock = new Mock<IWorkContext>();
+            _workContextMock.Setup(wc => wc.WorkingCurrency).Returns(_currency);
+
+            _engineMock = new Mock<IEngine>();
+            _engineMock.Setup(e => e.Resolve<IWorkContext>()).Returns(_workContextMock.Object);
+
+            EngineContext.Replace(_engineMock.Object);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            EngineContext.Replace(null);
+        }
+
+        // =====================================================================
+        // Round() extension method — Rounding001 (default)
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding001_AlreadyTwoDecimals_ReturnsSameValue()
+        {
+            Assert.That((1.23m).Round(RoundingType.Rounding001), Is.EqualTo(1.23m));
+        }
+
+        [Test]
+        public void Round_Rounding001_MoreThanTwoDecimals_RoundsToTwoDecimals()
+        {
+            Assert.That((1.235m).Round(RoundingType.Rounding001), Is.EqualTo(1.24m));
+        }
+
+        [Test]
+        public void Round_Rounding001_Zero_ReturnsZero()
+        {
+            Assert.That((0m).Round(RoundingType.Rounding001), Is.EqualTo(0m));
+        }
+
+        [Test]
+        public void Round_Rounding001_NegativeValue_RoundsCorrectly()
+        {
+            Assert.That((-1.235m).Round(RoundingType.Rounding001), Is.EqualTo(-1.24m));
+        }
+
+        [Test]
+        public void Round_DefaultCase_BehavesLikeRounding001()
+        {
+            // default branch in switch falls through to Rounding001 behaviour
+            Assert.That((2.555m).Round((RoundingType)999), Is.EqualTo(2.56m));
+        }
+
+        // =====================================================================
+        // Rounding005Up
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn3_RoundsUpTo5()
+        {
+            // 1.03 → digit after decimal point tenths=0, hundredths=3 → t=3 → t<5 → 5-3=2 → +0.02 → 1.05
+            Assert.That((1.03m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.05m));
+        }
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn4_RoundsUpTo5()
+        {
+            Assert.That((1.04m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.05m));
+        }
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn8_RoundsUpTo10()
+        {
+            // t=8 → t>=5 → 10-8=2 → +0.02 → 1.10
+            Assert.That((1.08m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.10m));
+        }
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn9_RoundsUpTo10()
+        {
+            Assert.That((1.09m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.10m));
+        }
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn0_Unchanged()
+        {
+            Assert.That((1.00m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding005Up_EndingIn5_Unchanged()
+        {
+            // t=5 → t>=5 → 10-5=5 → +0.05 → 1.10  (rounds up)
+            Assert.That((1.05m).Round(RoundingType.Rounding005Up), Is.EqualTo(1.10m));
+        }
+
+        // =====================================================================
+        // Rounding005Down
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding005Down_EndingIn1_RoundsDownTo0()
+        {
+            // t=1 → t<5 → t*-1=-1 → -0.01 → 1.00
+            Assert.That((1.01m).Round(RoundingType.Rounding005Down), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding005Down_EndingIn2_RoundsDownTo0()
+        {
+            Assert.That((1.02m).Round(RoundingType.Rounding005Down), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding005Down_EndingIn6_RoundsDownTo5()
+        {
+            // t=6 → t>=5 → 5-6=-1 → -0.01 → 1.05
+            Assert.That((1.06m).Round(RoundingType.Rounding005Down), Is.EqualTo(1.05m));
+        }
+
+        [Test]
+        public void Round_Rounding005Down_EndingIn7_RoundsDownTo5()
+        {
+            Assert.That((1.07m).Round(RoundingType.Rounding005Down), Is.EqualTo(1.05m));
+        }
+
+        [Test]
+        public void Round_Rounding005Down_EndingIn5_Unchanged()
+        {
+            // t=5 → t>=5 → 5-5=0 → 1.05
+            Assert.That((1.05m).Round(RoundingType.Rounding005Down), Is.EqualTo(1.05m));
+        }
+
+        // =====================================================================
+        // Rounding01Up
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding01Up_EndingIn5_RoundsUpTo10()
+        {
+            // t=5 → not Down → 10-5=5 → +0.05 → 1.10
+            Assert.That((1.05m).Round(RoundingType.Rounding01Up), Is.EqualTo(1.10m));
+        }
+
+        [Test]
+        public void Round_Rounding01Up_EndingIn3_RoundsDownTo0()
+        {
+            // t=3 → t<5 → t*-1=-3 → -0.03 → 1.00
+            Assert.That((1.03m).Round(RoundingType.Rounding01Up), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding01Up_EndingIn7_RoundsUpTo10()
+        {
+            // t=7 → t>=5 → 10-7=3 → +0.03 → 1.10
+            Assert.That((1.07m).Round(RoundingType.Rounding01Up), Is.EqualTo(1.10m));
+        }
+
+        [Test]
+        public void Round_Rounding01Up_EndingIn0_Unchanged()
+        {
+            Assert.That((1.00m).Round(RoundingType.Rounding01Up), Is.EqualTo(1.00m));
+        }
+
+        // =====================================================================
+        // Rounding01Down
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding01Down_EndingIn5_RoundsDownTo0()
+        {
+            // t=5 → Down && t==5 → t=-5 → -0.05 → 1.00
+            Assert.That((1.05m).Round(RoundingType.Rounding01Down), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding01Down_EndingIn3_RoundsDownTo0()
+        {
+            Assert.That((1.03m).Round(RoundingType.Rounding01Down), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding01Down_EndingIn7_RoundsUpTo10()
+        {
+            // t=7 → t!=5 → 10-7=3 → +0.03 → 1.10
+            Assert.That((1.07m).Round(RoundingType.Rounding01Down), Is.EqualTo(1.10m));
+        }
+
+        // =====================================================================
+        // Rounding05
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding05_EndingIn10_RoundsDownTo0()
+        {
+            // t=10 → t<25 → t*-1=-10 → -0.10 → 1.00
+            Assert.That((1.10m).Round(RoundingType.Rounding05), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn24_RoundsDownTo0()
+        {
+            Assert.That((1.24m).Round(RoundingType.Rounding05), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn25_RoundsUpTo50()
+        {
+            // t=25 → not<25 → t<50 → 50-25=25 → +0.25 → 1.50
+            Assert.That((1.25m).Round(RoundingType.Rounding05), Is.EqualTo(1.50m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn49_RoundsUpTo50()
+        {
+            Assert.That((1.49m).Round(RoundingType.Rounding05), Is.EqualTo(1.50m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn51_RoundsDownTo50()
+        {
+            // t=51 → not<25, not<50 → t<75 → 50-51=-1 → -0.01 → 1.50
+            Assert.That((1.51m).Round(RoundingType.Rounding05), Is.EqualTo(1.50m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn74_RoundsDownTo50()
+        {
+            Assert.That((1.74m).Round(RoundingType.Rounding05), Is.EqualTo(1.50m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn75_RoundsUpTo100()
+        {
+            // t=75 → not<25, not<50, not<75 → 100-75=25 → +0.25 → 2.00
+            Assert.That((1.75m).Round(RoundingType.Rounding05), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn99_RoundsUpTo100()
+        {
+            Assert.That((1.99m).Round(RoundingType.Rounding05), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn00_Unchanged()
+        {
+            Assert.That((2.00m).Round(RoundingType.Rounding05), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding05_EndingIn50_Unchanged()
+        {
+            // t=50 → not<25 → t<50 is false → t<75 → 50-50=0 → 1.50
+            Assert.That((1.50m).Round(RoundingType.Rounding05), Is.EqualTo(1.50m));
+        }
+
+        // =====================================================================
+        // Rounding1
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding1_EndingIn49_RoundsDownToWhole()
+        {
+            // t=49 → t<50 → truncate → 1.00
+            Assert.That((1.49m).Round(RoundingType.Rounding1), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1_EndingIn50_RoundsUpToNextWhole()
+        {
+            // t=50 → t>=50 → truncate+1 → 2.00
+            Assert.That((1.50m).Round(RoundingType.Rounding1), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1_EndingIn99_RoundsUpToNextWhole()
+        {
+            Assert.That((1.99m).Round(RoundingType.Rounding1), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1_WholeNumber_Unchanged()
+        {
+            Assert.That((3.00m).Round(RoundingType.Rounding1), Is.EqualTo(3.00m));
+        }
+
+        // =====================================================================
+        // Rounding1Up
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding1Up_EndingIn1_RoundsUpToNextWhole()
+        {
+            // t=1 → t>0 → truncate+1 → 2.00
+            Assert.That((1.01m).Round(RoundingType.Rounding1Up), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1Up_EndingIn99_RoundsUpToNextWhole()
+        {
+            Assert.That((1.99m).Round(RoundingType.Rounding1Up), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1Up_WholeNumber_Unchanged()
+        {
+            // t=0 → not t>0 → t<50 → truncate → 3.00
+            Assert.That((3.00m).Round(RoundingType.Rounding1Up), Is.EqualTo(3.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1Up_EndingIn50_RoundsUpToNextWhole()
+        {
+            Assert.That((1.50m).Round(RoundingType.Rounding1Up), Is.EqualTo(2.00m));
+        }
+
+        // =====================================================================
+        // Large and zero values
+        // =====================================================================
+
+        [Test]
+        public void Round_Rounding001_LargeValue_RoundsCorrectly()
+        {
+            Assert.That((99999.995m).Round(RoundingType.Rounding001), Is.EqualTo(100000.00m));
+        }
+
+        [Test]
+        public void Round_Rounding1_Zero_ReturnsZero()
+        {
+            Assert.That((0m).Round(RoundingType.Rounding1), Is.EqualTo(0m));
+        }
+
+        // =====================================================================
+        // RoundPrice(decimal, Currency) overload
+        // =====================================================================
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding001_ReturnsStandardRound()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding001 };
+            Assert.That(RoundingHelper.RoundPrice(1.235m, currency), Is.EqualTo(1.24m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding1_RoundsToWhole()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding1 };
+            Assert.That(RoundingHelper.RoundPrice(1.50m, currency), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding1Up_AlwaysRoundsUp()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding1Up };
+            Assert.That(RoundingHelper.RoundPrice(1.01m, currency), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding05_EndingIn25_RoundsTo50()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding05 };
+            Assert.That(RoundingHelper.RoundPrice(1.25m, currency), Is.EqualTo(1.50m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding005Up_EndingIn3_RoundsTo5()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding005Up };
+            Assert.That(RoundingHelper.RoundPrice(1.03m, currency), Is.EqualTo(1.05m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding005Down_EndingIn2_RoundsTo0()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding005Down };
+            Assert.That(RoundingHelper.RoundPrice(1.02m, currency), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding01Up_EndingIn5_RoundsTo10()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding01Up };
+            Assert.That(RoundingHelper.RoundPrice(1.05m, currency), Is.EqualTo(1.10m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_Rounding01Down_EndingIn5_RoundsTo0()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding01Down };
+            Assert.That(RoundingHelper.RoundPrice(1.05m, currency), Is.EqualTo(1.00m));
+        }
+
+        [Test]
+        public void RoundPrice_WithCurrency_ZeroValue_ReturnsZero()
+        {
+            var currency = new Currency { RoundingType = RoundingType.Rounding1Up };
+            Assert.That(RoundingHelper.RoundPrice(0m, currency), Is.EqualTo(0m));
+        }
+
+        // =====================================================================
+        // RoundPrice(decimal) overload — uses IWorkContext via EngineContext
+        // =====================================================================
+
+        [Test]
+        public void RoundPrice_NoOverload_UsesWorkingCurrencyRoundingType()
+        {
+            _currency.RoundingType = RoundingType.Rounding001;
+            var result = RoundingHelper.RoundPrice(1.235m);
+            Assert.That(result, Is.EqualTo(1.24m));
+        }
+
+        [Test]
+        public void RoundPrice_NoOverload_Rounding1_RoundsToWhole()
+        {
+            _currency.RoundingType = RoundingType.Rounding1;
+            Assert.That(RoundingHelper.RoundPrice(1.50m), Is.EqualTo(2.00m));
+        }
+
+        [Test]
+        public void RoundPrice_NoOverload_Rounding1Up_RoundsUpFromCent()
+        {
+            _currency.RoundingType = RoundingType.Rounding1Up;
+            Assert.That(RoundingHelper.RoundPrice(2.01m), Is.EqualTo(3.00m));
+        }
+
+        [Test]
+        public void RoundPrice_NoOverload_ResolvesWorkContextFromEngine()
+        {
+            _currency.RoundingType = RoundingType.Rounding001;
+            RoundingHelper.RoundPrice(5.00m);
+            _engineMock.Verify(e => e.Resolve<IWorkContext>(), Times.Once);
+        }
+
+        [Test]
+        public void RoundPrice_NoOverload_AccessesWorkingCurrency()
+        {
+            _currency.RoundingType = RoundingType.Rounding001;
+            RoundingHelper.RoundPrice(5.00m);
+            _workContextMock.Verify(wc => wc.WorkingCurrency, Times.AtLeastOnce);
+        }
+    }
+}

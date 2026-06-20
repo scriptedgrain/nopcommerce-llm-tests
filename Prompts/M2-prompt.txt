@@ -1,0 +1,163 @@
+Você é um desenvolvedor C# encarregado de escrever testes unitários
+para um sistema legado de e-commerce (nopCommerce 3.90, .NET Framework
+4.5.1).
+Sua tarefa: gerar testes unitários para o método GetTotalStockQuantity da
+classe ProductExtensions, apresentado abaixo.
+Requisitos obrigatórios:
+- Framework de testes: NUnit 3.x (atributos [TestFixture], [Test],
+  [SetUp]).
+- Biblioteca de mocking: Moq (não use Rhino.Mocks).
+- O código deve compilar em .NET Framework 4.8 / C# 7.3.
+- Gere uma classe de teste completa e autocontida, incluindo todos os
+  usings necessários.
+- Cubra os principais cenários do método: caminho feliz, casos de
+  borda e condições de erro que você identificar na lógica.
+- Use asserções do NUnit (Assert.That / Assert.AreEqual).
+- Não invente membros que não existam no código fornecido. Use apenas
+  os tipos e assinaturas apresentados abaixo.
+- Responda APENAS com o código C# da classe de teste, sem explicações.
+=== CÓDIGO DO MÉTODO SOB TESTE ===
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Nop.Core;
+using Nop.Core.Domain.Catalog;
+using Nop.Core.Domain.Customers;
+using Nop.Services.Directory;
+using Nop.Services.Localization;
+using Nop.Services.Shipping.Date;
+
+namespace Nop.Services.Catalog
+{
+    /// <summary>
+    /// Extensions
+    /// </summary>
+    public static class ProductExtensions
+    {
+public static int GetTotalStockQuantity(this Product product, 
+    bool useReservedQuantity = true, int warehouseId = 0)
+{
+    if (product == null)
+        throw new ArgumentNullException("product");
+
+    if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock)
+    {
+        //We can calculate total stock quantity when 'Manage inventory' property is set to 'Track inventory'
+        return 0;
+    }
+
+    if (product.UseMultipleWarehouses)
+    {
+        var pwi = product.ProductWarehouseInventory;
+        if (warehouseId > 0)
+        {
+            pwi = pwi.Where(x => x.WarehouseId == warehouseId).ToList();
+        }
+        var result = pwi.Sum(x => x.StockQuantity);
+        if (useReservedQuantity)
+        {
+            result = result - pwi.Sum(x => x.ReservedQuantity);
+        }
+        return result;
+    }
+            
+    return product.StockQuantity;
+}
+=== TIPOS E INTERFACES DOS QUAIS O MÉTODO DEPENDE ===
+
+public partial class Product : BaseEntity, ILocalizedEntity, ISlugSupported, IAclSupported, IStoreMappingSupported
+{
+    private ICollection<ProductCategory> _productCategories;
+    private ICollection<ProductManufacturer> _productManufacturers;
+    private ICollection<ProductPicture> _productPictures;
+    private ICollection<ProductReview> _productReviews;
+    private ICollection<ProductSpecificationAttribute> _productSpecificationAttributes;
+    private ICollection<ProductTag> _productTags;
+    private ICollection<ProductAttributeMapping> _productAttributeMappings;
+    private ICollection<ProductAttributeCombination> _productAttributeCombinations;
+    private ICollection<TierPrice> _tierPrices;
+    private ICollection<Discount> _appliedDiscounts;
+    private ICollection<ProductWarehouseInventory> _productWarehouseInventory;
+/// <summary>
+/// Gets or sets a value indicating how to manage inventory
+/// </summary>
+public int ManageInventoryMethodId { get; set; }
+/// <summary>
+/// Gets or sets a value indicating whether multiple warehouses are used for this product
+/// </summary>
+public bool UseMultipleWarehouses { get; set; }
+/// <summary>
+/// Gets or sets the stock quantity
+/// </summary>
+public int StockQuantity { get; set; }
+/// <summary>
+/// Gets or sets the collection of "ProductWarehouseInventory" records. We use it only when "UseMultipleWarehouses" is set to "true" and ManageInventoryMethod" to "ManageStock"
+/// </summary>
+public virtual ICollection<ProductWarehouseInventory> ProductWarehouseInventory
+{
+    get { return _productWarehouseInventory ?? (_productWarehouseInventory = new List<ProductWarehouseInventory>()); }
+    protected set { _productWarehouseInventory = value; }
+}
+
+using Nop.Core.Domain.Shipping;
+
+namespace Nop.Core.Domain.Catalog
+{
+    /// <summary>
+    /// Represents a record to manage product inventory per warehouse
+    /// </summary>
+    public partial class ProductWarehouseInventory : BaseEntity
+    {
+        /// <summary>
+        /// Gets or sets the product identifier
+        /// </summary>
+        public int ProductId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the warehouse identifier
+        /// </summary>
+        public int WarehouseId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the stock quantity
+        /// </summary>
+        public int StockQuantity { get; set; }
+
+        /// <summary>
+        /// Gets or sets the reserved quantity (ordered but not shipped yet)
+        /// </summary>
+        public int ReservedQuantity { get; set; }
+
+        /// <summary>
+        /// Gets the product
+        /// </summary>
+        public virtual Product Product { get; set; }
+
+        /// <summary>
+        /// Gets the warehouse
+        /// </summary>
+        public virtual Warehouse Warehouse { get; set; }
+    }
+}
+namespace Nop.Core.Domain.Catalog
+{
+    /// <summary>
+    /// Represents a method of inventory management
+    /// </summary>
+    public enum ManageInventoryMethod
+    {
+        /// <summary>
+        /// Don't track inventory for product
+        /// </summary>
+        DontManageStock = 0,
+        /// <summary>
+        /// Track inventory for product
+        /// </summary>
+        ManageStock = 1,
+        /// <summary>
+        /// Track inventory for product by product attributes
+        /// </summary>
+        ManageStockByAttributes = 2,
+    }
+}

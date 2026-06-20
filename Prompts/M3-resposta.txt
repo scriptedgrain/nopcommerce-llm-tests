@@ -1,0 +1,407 @@
+using System;
+using Moq;
+using NUnit.Framework;
+using Nop.Core;
+using Nop.Core.Domain.Directory;
+using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Tax;
+using Nop.Services.Catalog;
+using Nop.Services.Directory;
+using Nop.Services.Localization;
+
+namespace Nop.Services.Tests.Catalog
+{
+    [TestFixture]
+    public class PriceFormatterTests
+    {
+        private Mock<IWorkContext> _workContextMock;
+        private Mock<ICurrencyService> _currencyServiceMock;
+        private Mock<ILocalizationService> _localizationServiceMock;
+        private TaxSettings _taxSettings;
+        private CurrencySettings _currencySettings;
+        private PriceFormatter _priceFormatter;
+
+        private Language _defaultLanguage;
+        private Currency _usdCurrency;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _defaultLanguage = new Language
+            {
+                Id = 1,
+                Name = "English",
+                LanguageCulture = "en-US",
+                Published = true
+            };
+
+            _usdCurrency = new Currency
+            {
+                Id = 1,
+                Name = "US Dollar",
+                CurrencyCode = "USD",
+                DisplayLocale = "en-US",
+                CustomFormatting = string.Empty,
+                Rate = 1.0m,
+                Published = true
+            };
+
+            _workContextMock = new Mock<IWorkContext>();
+            _workContextMock.Setup(w => w.WorkingLanguage).Returns(_defaultLanguage);
+            _workContextMock.Setup(w => w.WorkingCurrency).Returns(_usdCurrency);
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.ExcludingTax);
+
+            _currencyServiceMock = new Mock<ICurrencyService>();
+            _currencyServiceMock
+                .Setup(c => c.GetCurrencyByCode(It.IsAny<string>()))
+                .Returns((string code) => code == "USD" ? _usdCurrency : null);
+
+            _localizationServiceMock = new Mock<ILocalizationService>();
+            _localizationServiceMock
+                .Setup(l => l.GetResource(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(string.Empty);
+
+            _taxSettings = new TaxSettings
+            {
+                DisplayTaxSuffix = false,
+                TaxDisplayType = TaxDisplayType.ExcludingTax
+            };
+
+            _currencySettings = new CurrencySettings
+            {
+                DisplayCurrencyLabel = false,
+                PrimaryStoreCurrencyId = 1
+            };
+
+            _priceFormatter = new PriceFormatter(
+                _workContextMock.Object,
+                _currencyServiceMock.Object,
+                _localizationServiceMock.Object,
+                _taxSettings,
+                _currencySettings
+            );
+        }
+
+        // --- FormatPrice(decimal price) ---
+
+        [Test]
+        public void FormatPrice_SingleParam_ReturnsFormattedPrice()
+        {
+            var result = _priceFormatter.FormatPrice(10.00m);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+            Assert.That(result, Does.Contain("10"));
+        }
+
+        [Test]
+        public void FormatPrice_SingleParam_ZeroPrice_ReturnsFormattedZero()
+        {
+            var result = _priceFormatter.FormatPrice(0m);
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result, Does.Contain("0"));
+        }
+
+        // --- FormatPrice(decimal, bool, Currency) ---
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndTargetCurrency_ExcludesTax_WhenTaxDisplayTypeExcluding()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.ExcludingTax);
+
+            var result = _priceFormatter.FormatPrice(25.00m, true, _usdCurrency);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+            Assert.That(result, Does.Contain("25"));
+        }
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndTargetCurrency_IncludesTax_WhenTaxDisplayTypeIncluding()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.IncludingTax);
+
+            var result = _priceFormatter.FormatPrice(25.00m, true, _usdCurrency);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+        }
+
+        // --- FormatPrice(decimal, bool, bool) ---
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndShowTax_ShowTaxFalse_NoTaxSuffix()
+        {
+            _taxSettings.DisplayTaxSuffix = false;
+
+            var result = _priceFormatter.FormatPrice(15.00m, true, false);
+
+            Assert.That(result, Does.Not.Contain("tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndShowTax_ShowTaxTrue_ExclTax_UsesFallback()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.ExcludingTax);
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.ExclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(string.Empty);
+
+            var result = _priceFormatter.FormatPrice(15.00m, true, true);
+
+            Assert.That(result, Does.Contain("excl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndShowTax_ShowTaxTrue_InclTax_UsesFallback()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.IncludingTax);
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.InclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(string.Empty);
+
+            var result = _priceFormatter.FormatPrice(15.00m, true, true);
+
+            Assert.That(result, Does.Contain("incl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndShowTax_ShowTaxTrue_ExclTax_UsesLocalizationResource()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.ExcludingTax);
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.ExclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns("{0} sem impostos");
+
+            var result = _priceFormatter.FormatPrice(15.00m, true, true);
+
+            Assert.That(result, Does.Contain("sem impostos"));
+        }
+
+        [Test]
+        public void FormatPrice_WithShowCurrencyAndShowTax_ShowTaxTrue_InclTax_UsesLocalizationResource()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.IncludingTax);
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.InclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns("{0} com impostos");
+
+            var result = _priceFormatter.FormatPrice(15.00m, true, true);
+
+            Assert.That(result, Does.Contain("com impostos"));
+        }
+
+        // --- FormatPrice(decimal, bool, string, bool, Language) ---
+
+        [Test]
+        public void FormatPrice_WithCurrencyCode_KnownCode_UsesResolvedCurrency()
+        {
+            var result = _priceFormatter.FormatPrice(50.00m, true, "USD", false, _defaultLanguage);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+            Assert.That(result, Does.Contain("50"));
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyCode_UnknownCode_FallsBackToCodeOnly()
+        {
+            _currencyServiceMock
+                .Setup(c => c.GetCurrencyByCode("XYZ"))
+                .Returns((Currency)null);
+
+            var result = _priceFormatter.FormatPrice(50.00m, true, "XYZ", false, _defaultLanguage);
+
+            Assert.That(result, Is.Not.Null);
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyCode_ShowTaxTrue_ExclTax_AppendsSuffix()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.ExcludingTax);
+
+            var result = _priceFormatter.FormatPrice(50.00m, true, "USD", true, _defaultLanguage);
+
+            Assert.That(result, Does.Contain("excl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyCode_ShowTaxTrue_InclTax_AppendsSuffix()
+        {
+            _workContextMock.Setup(w => w.TaxDisplayType).Returns(TaxDisplayType.IncludingTax);
+
+            var result = _priceFormatter.FormatPrice(50.00m, true, "USD", true, _defaultLanguage);
+
+            Assert.That(result, Does.Contain("incl tax").IgnoreCase);
+        }
+
+        // --- FormatPrice(decimal, bool, string, Language, bool) ---
+
+        [Test]
+        public void FormatPrice_WithCurrencyCodeAndLanguageAndPriceIncludesTax_KnownCode_ReturnsFormattedPrice()
+        {
+            var result = _priceFormatter.FormatPrice(30.00m, true, "USD", _defaultLanguage, false);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+            Assert.That(result, Does.Contain("30"));
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyCodeAndLanguageAndPriceIncludesTax_UnknownCode_FallsBackToCodeOnly()
+        {
+            _currencyServiceMock
+                .Setup(c => c.GetCurrencyByCode("EUR"))
+                .Returns((Currency)null);
+
+            var result = _priceFormatter.FormatPrice(30.00m, true, "EUR", _defaultLanguage, false);
+
+            Assert.That(result, Is.Not.Null);
+        }
+
+        // --- FormatPrice(decimal, bool, Currency, Language, bool) ---
+
+        [Test]
+        public void FormatPrice_WithCurrencyAndLanguageAndPriceIncludesTax_DisplayTaxSuffixFalse_NoSuffix()
+        {
+            _taxSettings.DisplayTaxSuffix = false;
+
+            var result = _priceFormatter.FormatPrice(99.99m, true, _usdCurrency, _defaultLanguage, false);
+
+            Assert.That(result, Does.Not.Contain("tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyAndLanguageAndPriceIncludesTax_DisplayTaxSuffixTrue_InclTax_AppendsSuffix()
+        {
+            _taxSettings.DisplayTaxSuffix = true;
+
+            var result = _priceFormatter.FormatPrice(99.99m, true, _usdCurrency, _defaultLanguage, true);
+
+            Assert.That(result, Does.Contain("incl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_WithCurrencyAndLanguageAndPriceIncludesTax_DisplayTaxSuffixTrue_ExclTax_AppendsSuffix()
+        {
+            _taxSettings.DisplayTaxSuffix = true;
+
+            var result = _priceFormatter.FormatPrice(99.99m, true, _usdCurrency, _defaultLanguage, false);
+
+            Assert.That(result, Does.Contain("excl tax").IgnoreCase);
+        }
+
+        // --- FormatPrice(decimal, bool, Currency, Language, bool, bool) — the main overload ---
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowTaxFalse_ReturnsOnlyCurrencyString()
+        {
+            var result = _priceFormatter.FormatPrice(100m, true, _usdCurrency, _defaultLanguage, false, false);
+
+            Assert.That(result, Does.Not.Contain("tax").IgnoreCase);
+            Assert.That(result, Does.Contain("100"));
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowTaxTrue_InclTax_LocalizedSuffix()
+        {
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.InclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns("{0} incl tax");
+
+            var result = _priceFormatter.FormatPrice(100m, true, _usdCurrency, _defaultLanguage, true, true);
+
+            Assert.That(result, Does.Contain("incl tax"));
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowTaxTrue_ExclTax_LocalizedSuffix()
+        {
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.ExclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns("{0} excl tax");
+
+            var result = _priceFormatter.FormatPrice(100m, true, _usdCurrency, _defaultLanguage, false, true);
+
+            Assert.That(result, Does.Contain("excl tax"));
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowTaxTrue_InclTax_FallbackSuffix_WhenLocalizationEmpty()
+        {
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.InclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(string.Empty);
+
+            var result = _priceFormatter.FormatPrice(100m, true, _usdCurrency, _defaultLanguage, true, true);
+
+            Assert.That(result, Does.Contain("incl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowTaxTrue_ExclTax_FallbackSuffix_WhenLocalizationEmpty()
+        {
+            _localizationServiceMock
+                .Setup(l => l.GetResource("Products.ExclTaxSuffix", _defaultLanguage.Id, false, It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(string.Empty);
+
+            var result = _priceFormatter.FormatPrice(100m, true, _usdCurrency, _defaultLanguage, false, true);
+
+            Assert.That(result, Does.Contain("excl tax").IgnoreCase);
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_NegativePrice_ReturnsFormattedValue()
+        {
+            var result = _priceFormatter.FormatPrice(-10m, true, _usdCurrency, _defaultLanguage, false, false);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_LargePrice_ReturnsFormattedValue()
+        {
+            var result = _priceFormatter.FormatPrice(1000000m, true, _usdCurrency, _defaultLanguage, false, false);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+            Assert.That(result, Does.Contain("000"));
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_ShowCurrencyFalse_DoesNotThrow()
+        {
+            Assert.DoesNotThrow(() =>
+                _priceFormatter.FormatPrice(50m, false, _usdCurrency, _defaultLanguage, false, false));
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_CurrencyWithCustomFormatting_ReturnsFormattedPrice()
+        {
+            var brlCurrency = new Currency
+            {
+                Id = 2,
+                Name = "Brazilian Real",
+                CurrencyCode = "BRL",
+                DisplayLocale = "pt-BR",
+                CustomFormatting = string.Empty,
+                Rate = 5.0m,
+                Published = true
+            };
+
+            var result = _priceFormatter.FormatPrice(100m, true, brlCurrency, _defaultLanguage, false, false);
+
+            Assert.That(result, Is.Not.Null.And.Not.Empty);
+        }
+
+        [Test]
+        public void FormatPrice_FullOverload_CurrencyWithNullDisplayLocale_DoesNotThrow()
+        {
+            var currency = new Currency
+            {
+                Id = 3,
+                CurrencyCode = "XXX",
+                DisplayLocale = null,
+                CustomFormatting = string.Empty
+            };
+
+            Assert.DoesNotThrow(() =>
+                _priceFormatter.FormatPrice(10m, true, currency, _defaultLanguage, false, false));
+        }
+    }
+}
