@@ -74,11 +74,6 @@ de encapsulamento (M5).
    ```bash
    dotnet test --filter "FullyQualifiedName~RoundingHelperTests"
    ```
-
-## Citação
-
-Se este material for útil, cite o trabalho de origem (TCC, UNISINOS, 2026).
-
 ## Licença
 
 Os artefatos deste repositório são disponibilizados para fins acadêmicos e de
